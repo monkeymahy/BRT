@@ -489,17 +489,35 @@ def process(args):
 
     if args.num_processes == 1:
         for fn in tqdm(work_files):
-
-            process_func((fn, args))
+            try:
+                process_func((fn, args))
+            except Exception:
+                logging.exception(f"Unexpected error when processing {fn}, skipped.")
     else:
         pool = Pool(processes=args.num_processes, initializer=initializer)
+        valid_count = 0
         try:
-            results = list(
-                tqdm(pool.imap_unordered(process_func, zip(work_files, repeat(args))), total=len(work_files))
-            )
-            print(f"Processed {len([valid for valid in results if valid])} files.")
+            result_iter = pool.imap_unordered(process_func, zip(work_files, repeat(args)))
+            for _ in tqdm(range(len(work_files))):
+                try:
+                    valid = next(result_iter)
+                except StopIteration:
+                    break
+                except Exception:
+                    logging.exception("Worker task failed and was skipped.")
+                    continue
+
+                if valid:
+                    valid_count += 1
+
+            print(f"Processed {valid_count} files.")
         except KeyboardInterrupt:
             pool.terminate()
+            pool.join()
+            return
+        finally:
+            if getattr(pool, "_state", None) == "RUN":
+                pool.close()
             pool.join()
 
 
@@ -650,43 +668,47 @@ def build_brt_data_no_label(solid, save_path, filename, **kwargs):
 
 
 def process_one_file(arguments):
-    fn, args = arguments
-
-    fn_stem = fn.stem
-    if not os.path.exists(args.output):
-        os.mkdir(args.output)
-    output_path = pathlib.Path(args.output)
-
-    target_file = output_path / f"{fn_stem}.bin"
-
-    if target_file.exists():
-        return False
-
     try:
-        if args.no_label:
-            compound = Compound.load_from_step(fn)
-        else:
-            compound, shape_att = Compound.load_step_with_attributes(fn)
-            args.shape_att = shape_att
+        fn, args = arguments
 
+        fn_stem = fn.stem
+        if not os.path.exists(args.output):
+            os.mkdir(args.output)
+        output_path = pathlib.Path(args.output)
+
+        target_file = output_path / f"{fn_stem}.bin"
+
+        if target_file.exists():
+            return False
+
+        try:
+            if args.no_label:
+                compound = Compound.load_from_step(fn)
+            else:
+                compound, shape_att = Compound.load_step_with_attributes(fn)
+                args.shape_att = shape_att
+
+        except Exception:
+            logging.exception(f"Read Step Error in {fn}")
+            return False
+
+        graph = False
+        try:
+            for idx, solid in enumerate(compound.solids()):
+                build_fn = args.build_fn
+                graph = build_fn(solid, output_path, fn_stem, **vars(args))
+                break
+
+        except ValueError:
+            logging.exception(f"Found Value Error in {fn.stem}")
+        except Exception:
+            logging.exception(f"Build Error in {fn.stem}")
+            return False
+
+        return graph
     except Exception:
-        logging.exception(f"Read Step Error in {fn}")
+        logging.exception("Unexpected failure in process_one_file, skipped.")
         return False
-
-    graph = False
-    try:
-        for idx, solid in enumerate(compound.solids()):
-            build_fn = args.build_fn
-            graph = build_fn(solid, output_path, fn_stem, **vars(args))
-            break
-
-    except ValueError:
-        logging.exception(f"Found Value Error in {fn.stem}")
-    except Exception:
-        logging.exception(f"Build Error in {fn.stem}")
-        return False
-
-    return graph
 
 
 def doKnotInsertion(spline_surf: Geom_BSplineSurface, num_max_knots=3):
@@ -846,6 +868,7 @@ def process_main(input_path, output_path, method=10, dataset="tmcad", target="br
                 "--no_random_name",
                 "--method",
                 str(method),
+                "--no_label",
             ]
         )
         main(
@@ -857,6 +880,7 @@ def process_main(input_path, output_path, method=10, dataset="tmcad", target="br
                 "--no_random_name",
                 "--method",
                 str(method),
+                "--no_label",
             ]
         )
         main(
@@ -868,6 +892,7 @@ def process_main(input_path, output_path, method=10, dataset="tmcad", target="br
                 "--no_random_name",
                 "--method",
                 str(method),
+                "--no_label",
             ]
         )
 
