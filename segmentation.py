@@ -3,8 +3,8 @@ import argparse
 import pathlib
 import time
 from pytorch_lightning import Trainer
-from pytorch_lightning.callbacks import ModelCheckpoint
-from pytorch_lightning.loggers import TensorBoardLogger
+from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
+from swanlab.integration.pytorch_lightning import SwanLabLogger
 from lightning.pytorch import seed_everything
 import datasets.brt_dataset
 from models.brt_segmentation import SegmentationPL as BRTSegmentation
@@ -36,6 +36,15 @@ parser.add_argument(
 
 parser.add_argument("--dataset_dir", type=str, help="Directory to datasets")
 parser.add_argument("--batch_size", type=int, default=64, help="Batch size")
+parser.add_argument(
+    "--max_epochs", type=int, default=200, help="Maximum number of training epochs"
+)
+parser.add_argument(
+    "--early_stop_patience",
+    type=int,
+    default=20,
+    help="Early stopping patience based on val_iou (set <=0 to disable)",
+)
 parser.add_argument(
     "--num_workers",
     type=int,
@@ -77,9 +86,24 @@ checkpoint_callback = ModelCheckpoint(
     save_last=True,
 )
 
-trainer = Trainer(callbacks=[checkpoint_callback], logger=TensorBoardLogger(
-    str(results_path), name=month_day, version=hour_min_second,
-),devices=[args.gpu],accelerator='gpu')
+callbacks = [checkpoint_callback]
+if args.early_stop_patience > 0:
+    callbacks.append(
+        EarlyStopping(
+            monitor="val_acc",
+            mode="max",
+            patience=args.early_stop_patience,
+        )
+    )
+
+swanlab_logger = SwanLabLogger(
+    project=experiment_name,
+    experiment_name=f"{month_day}-{hour_min_second}",
+    save_dir=str(results_path),
+    config={k: v for k, v in vars(args).items() if k != "checkpoint"},
+)
+
+trainer = Trainer(callbacks=callbacks, logger=swanlab_logger,devices=[args.gpu],accelerator='gpu', max_epochs=args.max_epochs)
 
 if args.method == "brt":
     SegmentationModel = BRTSegmentation
@@ -102,8 +126,7 @@ BRT Classification
 -----------------------------------------------------------------------------------
 Logs written to results/{experiment_name}/{month_day}/{hour_min_second}
 
-To monitor the logs, run:
-tensorboard --logdir results/{experiment_name}/{month_day}/{hour_min_second}
+To monitor the logs, check SwanLab dashboard (CLI will print the run link after training starts).
 
 The trained model with the best validation loss will be written to:
 results/{experiment_name}/{month_day}/{hour_min_second}/best.ckpt

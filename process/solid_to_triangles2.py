@@ -836,7 +836,7 @@ def process_main(input_path, output_path, method=10, dataset="tmcad", target="br
                 "--no_label",
             ]
         )
-    else:
+    elif dataset == "mfcad":
         main(
             [
                 f"{input_path}/train",
@@ -863,6 +863,19 @@ def process_main(input_path, output_path, method=10, dataset="tmcad", target="br
             [
                 f"{input_path}/val",
                 f"{output_path}/{target}/val",
+                "--num_processes",
+                f"{process_num}",
+                "--no_random_name",
+                "--method",
+                str(method),
+            ]
+        )
+
+    elif dataset == "sfcad":
+        main(
+            [
+                f"{input_path}",
+                f"{output_path}/{target}",
                 "--num_processes",
                 f"{process_num}",
                 "--no_random_name",
